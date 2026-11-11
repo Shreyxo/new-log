@@ -148,7 +148,7 @@ async function sendViaSmtp(
 
   try {
     const info = await transporter.sendMail({
-      from: sender.raw,
+      from: `"${sender.name}" <${sender.email}>`,
       to: input.to,
       subject: input.subject,
       text: input.text,

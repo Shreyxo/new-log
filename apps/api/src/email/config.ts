@@ -60,7 +60,7 @@ export function emailProvider(): EmailProviderType {
 
   // Automatic provider resolution:
   // 1. If Brevo API key is set, prefer HTTPS REST API (avoids port 587 / IP issues on cloud hosting)
-  if (process.env.BREVO_API_KEY?.trim()) {
+  if (process.env.BREVO_API_KEY?.trim() || process.env.BREVO_KEY?.trim()) {
     return "brevo-api";
   }
 
@@ -95,21 +95,21 @@ export function exposesDevLinks(): boolean {
 
 export function getSmtpConfig(): SmtpConfig {
   const host =
-    process.env.BREVO_SMTP_HOST?.trim() ||
     process.env.SMTP_HOST?.trim() ||
+    process.env.BREVO_SMTP_HOST?.trim() ||
     "smtp-relay.brevo.com";
   const port = Number(
-    process.env.BREVO_SMTP_PORT?.trim() ||
     process.env.SMTP_PORT?.trim() ||
+    process.env.BREVO_SMTP_PORT?.trim() ||
     "587",
   );
   const user =
-    process.env.BREVO_SMTP_USER?.trim() ||
     process.env.SMTP_USER?.trim() ||
+    process.env.BREVO_SMTP_USER?.trim() ||
     "";
   const pass =
-    process.env.BREVO_SMTP_PASSWORD?.trim() ||
     process.env.SMTP_PASSWORD?.trim() ||
+    process.env.BREVO_SMTP_PASSWORD?.trim() ||
     "";
 
   if (!user || !pass) {

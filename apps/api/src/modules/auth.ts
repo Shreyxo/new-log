@@ -150,6 +150,20 @@ async function logAction(
 }
 
 /** Student self-registration */
+function getEmailDeliveryErrorMessage(error: unknown): string {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (msg.includes("525") || msg.includes("Unauthorized IP address")) {
+    return "We could not send the verification email: Brevo rejected the connection because this server's IP is not authorized (525 Unauthorized IP address). In your Brevo account, go to Settings -> Security -> Authorized IPs and click 'Deactivate' on IP blocking.";
+  }
+  if (msg.includes("535") || msg.includes("Authentication failed")) {
+    return "We could not send the verification email: SMTP authentication failed. Please verify your BREVO_SMTP_USER and BREVO_SMTP_PASSWORD.";
+  }
+  if (msg.includes("550") || msg.includes("Sender address rejected") || msg.includes("Sender rejected")) {
+    return "We could not send the verification email: Sender address rejected. In Brevo, ensure your EMAIL_FROM address is verified in Senders & IP.";
+  }
+  return "We could not send the verification email. Please verify your email configuration or try again later.";
+}
+
 export async function signupStudent(input: unknown): Promise<{
   userId: string;
   verificationUrl?: string;
@@ -227,6 +241,7 @@ export async function signupStudent(input: unknown): Promise<{
 
   const base = resolveBaseUrl(webUrl);
   const verificationUrl = `${base}/verify-email?token=${rawToken}`;
+  console.info(`[AUTH] Verification URL generated for ${email}: ${verificationUrl}`);
   const mailContent = buildVerificationEmail({ name, verificationUrl });
 
   try {
@@ -249,7 +264,7 @@ export async function signupStudent(input: unknown): Promise<{
     }, { maxWait: 10000, timeout: 20000 });
     throw new AuthError(
       "EMAIL_FAILED",
-      "We could not send the verification email. Please verify your email configuration or try again later.",
+      getEmailDeliveryErrorMessage(error),
       500,
     );
   }
@@ -439,6 +454,7 @@ export async function resendVerificationEmail(input: unknown): Promise<{
 
   const base = resolveBaseUrl(webUrl);
   const verificationUrl = `${base}/verify-email?token=${rawToken}`;
+  console.info(`[AUTH] Resend verification URL generated for ${email}: ${verificationUrl}`);
   const mailContent = buildVerificationEmail({ name: user.name, verificationUrl });
 
   try {
@@ -455,7 +471,7 @@ export async function resendVerificationEmail(input: unknown): Promise<{
     );
     throw new AuthError(
       "EMAIL_FAILED",
-      "We could not send the verification email. Please try again later.",
+      getEmailDeliveryErrorMessage(error),
       500,
     );
   }
@@ -523,6 +539,7 @@ export async function requestPasswordReset(input: unknown): Promise<{
 
   const base = resolveBaseUrl(webUrl);
   const resetUrl = `${base}/reset-password?token=${rawToken}`;
+  console.info(`[AUTH] Password reset URL generated for ${email}: ${resetUrl}`);
   const mailContent = buildPasswordResetEmail({ name: user.name, resetUrl });
 
   try {
