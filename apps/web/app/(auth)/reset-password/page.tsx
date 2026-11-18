@@ -9,9 +9,11 @@ export const metadata = { title: "Reset password — Digital BE Log Book" };
 export default function ResetPasswordPage({
   searchParams,
 }: {
-  searchParams?: { token?: string };
+  searchParams?: { token?: string; oobCode?: string; mode?: string };
 }) {
   const token = searchParams?.token;
+  const oobCode = searchParams?.oobCode;
+  const hasCode = Boolean(token || oobCode);
 
   return (
     <Card>
@@ -20,12 +22,12 @@ export default function ResetPasswordPage({
         <CardDescription>Choose a new password for your account.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {token ? (
-          <ResetPasswordForm token={token} />
+        {hasCode ? (
+          <ResetPasswordForm token={token} oobCode={oobCode} />
         ) : (
           <>
             <Alert variant="destructive">
-              <AlertDescription>This reset link is missing its token.</AlertDescription>
+              <AlertDescription>This reset link is missing its reset code or token.</AlertDescription>
             </Alert>
             <Button asChild variant="outline" className="w-full">
               <Link href="/forgot-password">Request a new link</Link>

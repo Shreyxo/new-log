@@ -7,18 +7,18 @@ export const metadata = { title: "Verify email — Digital BE Log Book" };
 export default async function VerifyEmailPage({
   searchParams,
 }: {
-  searchParams?: { token?: string };
+  searchParams?: { token?: string; oobCode?: string; mode?: string };
 }) {
   const token = searchParams?.token;
+  const oobCode = searchParams?.oobCode;
+  const mode = searchParams?.mode;
+
   let errorMessage: string | null = null;
   let errorCode: string | null = null;
   let verifiedEmail: string | null = null;
   let alreadyVerified = false;
 
-  if (!token) {
-    errorMessage = "This link is missing its verification token.";
-    errorCode = "INVALID_TOKEN";
-  } else {
+  if (token) {
     try {
       const result = await verifyEmail(token);
       verifiedEmail = result.email;
@@ -46,6 +46,8 @@ export default async function VerifyEmailPage({
           alreadyVerified={alreadyVerified}
           errorMessage={errorMessage}
           errorCode={errorCode}
+          oobCode={oobCode}
+          mode={mode}
         />
       </CardContent>
     </Card>

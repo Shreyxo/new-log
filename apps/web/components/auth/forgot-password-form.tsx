@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { sendPasswordResetEmail } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,13 +31,31 @@ export function ForgotPasswordForm() {
 
   async function onSubmit(values: Values) {
     setFormError(null);
-    const result = await requestPasswordResetAction(values);
-    if (!result.success) {
-      setFormError(result.error);
-      return;
+
+    // 1. Try Firebase password reset email first (Section 10)
+    let firebaseSent = false;
+    try {
+      await sendPasswordResetEmail(auth, values.email);
+      firebaseSent = true;
+    } catch (fbErr: any) {
+      console.info("[AUTH] Firebase sendPasswordResetEmail status:", fbErr?.code || fbErr?.message);
     }
-    // Always show the generic message so the endpoint does not reveal registration.
-    setSent(result.data);
+
+    // 2. If Firebase did not send (e.g. unmigrated legacy user), fallback to legacy requestPasswordResetAction
+    if (!firebaseSent) {
+      try {
+        const result = await requestPasswordResetAction(values);
+        if (result.success && result.data.resetUrl) {
+          setSent(result.data);
+          return;
+        }
+      } catch (legacyErr) {
+        console.warn("[AUTH] Legacy password reset fallback:", legacyErr);
+      }
+    }
+
+    // Generic response to prevent email enumeration
+    setSent({});
   }
 
   if (sent) {

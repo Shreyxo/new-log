@@ -31,7 +31,7 @@ export type SessionUser = {
 
 export type AuthResult =
   | { ok: true; user: SessionUser }
-  | { ok: false; reason: "INVALID_CREDENTIALS" | "EMAIL_NOT_VERIFIED" | "ACCOUNT_INACTIVE" };
+  | { ok: false; reason: "INVALID_CREDENTIALS" | "EMAIL_NOT_VERIFIED" | "ACCOUNT_INACTIVE" | "MIGRATED_TO_FIREBASE" | "RATE_LIMITED" };
 
 /**
  * Demo kill-switch for email verification (default ON, per master prompt rule
@@ -96,6 +96,52 @@ export async function authenticate(email: string, password: string): Promise<Aut
     });
   } catch (error) {
     return { ok: false, reason: "INVALID_CREDENTIALS" };
+  }
+}
+
+/** Firebase ID Token check used by NextAuth's `authorize`. */
+export async function authenticateWithFirebase(idToken: string): Promise<AuthResult> {
+  try {
+    return await backendSystemApi<AuthResult>("/v1/auth/firebase-login", {
+      method: "POST",
+      body: JSON.stringify({ idToken }),
+    });
+  } catch (error) {
+    return { ok: false, reason: "INVALID_CREDENTIALS" };
+  }
+}
+
+/** Student self-registration via Firebase token. */
+export async function signupStudentFirebase(input: unknown): Promise<{
+  userId: string;
+  message: string;
+}> {
+  try {
+    return await backendSystemApi<{ userId: string; message: string }>("/v1/auth/signup-firebase", {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  } catch (error) {
+    toAuthError(error);
+  }
+}
+
+/** Synchronizes Firebase email verification status into PostgreSQL. */
+export async function syncEmailVerification(idToken: string): Promise<{
+  success: boolean;
+  email: string;
+  alreadyVerified?: boolean;
+}> {
+  try {
+    return await backendSystemApi<{ success: boolean; email: string; alreadyVerified?: boolean }>(
+      "/v1/auth/sync-email-verification",
+      {
+        method: "POST",
+        body: JSON.stringify({ idToken }),
+      },
+    );
+  } catch (error) {
+    toAuthError(error);
   }
 }
 

@@ -6,6 +6,8 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { confirmPasswordReset } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/auth/password-input";
@@ -27,7 +29,7 @@ const formSchema = z
 
 type Values = z.infer<typeof formSchema>;
 
-export function ResetPasswordForm({ token }: { token: string }) {
+export function ResetPasswordForm({ token, oobCode }: { token?: string; oobCode?: string }) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const [doneMessage, setDoneMessage] = useState<string | null>(null);
@@ -43,13 +45,41 @@ export function ResetPasswordForm({ token }: { token: string }) {
 
   async function onSubmit(values: Values) {
     setFormError(null);
-    const result = await resetPasswordAction({ token, password: values.password });
-    if (!result.success) {
-      setFormError(result.error);
+
+    // Option 1: Firebase password reset via oobCode (Section 10)
+    if (oobCode) {
+      try {
+        await confirmPasswordReset(auth, oobCode, values.password);
+        setDoneMessage("Password reset successfully via Firebase. Redirecting you to sign in…");
+        setTimeout(() => router.push("/login"), 2000);
+        return;
+      } catch (fbErr: any) {
+        if (fbErr?.code === "auth/invalid-action-code") {
+          setFormError("This password reset link is invalid or has expired. Please request a new link.");
+          return;
+        }
+        if (fbErr?.code === "auth/weak-password") {
+          setFormError("Password is too weak. Please use at least 8 characters.");
+          return;
+        }
+        setFormError(fbErr?.message || "Failed to reset password. Please request a new link.");
+        return;
+      }
+    }
+
+    // Option 2: Legacy single-use token fallback
+    if (token) {
+      const result = await resetPasswordAction({ token, password: values.password });
+      if (!result.success) {
+        setFormError(result.error);
+        return;
+      }
+      setDoneMessage(result.data?.message || "Password updated successfully. Redirecting you to sign in…");
+      setTimeout(() => router.push("/login"), 2000);
       return;
     }
-    setDoneMessage(result.data?.message || "Password updated successfully. Redirecting you to sign in…");
-    setTimeout(() => router.push("/login"), 2000);
+
+    setFormError("Missing reset token or code. Please request a new reset link.");
   }
 
   if (doneMessage) {

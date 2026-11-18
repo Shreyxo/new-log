@@ -155,6 +155,10 @@ import {
 } from "./modules/gallery.js";
 import {
   authenticate,
+  authenticateWithFirebase,
+  signupStudentFirebase,
+  syncEmailVerification,
+  resendFirebaseVerificationEmail,
   requestPasswordReset,
   resetPassword,
   signupStudent,
@@ -404,6 +408,21 @@ async function handleAuthRequest(
   }
 
   try {
+    if (method === "POST" && pathname === "/v1/auth/firebase-login") {
+      const body = (await readJson(request)) as { idToken?: string };
+      sendJson(response, 200, await authenticateWithFirebase(body.idToken ?? ""));
+      return true;
+    }
+    if (method === "POST" && pathname === "/v1/auth/signup-firebase") {
+      const body = await readJson(request);
+      sendJson(response, 200, await signupStudentFirebase(body));
+      return true;
+    }
+    if (method === "POST" && pathname === "/v1/auth/sync-email-verification") {
+      const body = (await readJson(request)) as { idToken?: string };
+      sendJson(response, 200, await syncEmailVerification(body.idToken ?? ""));
+      return true;
+    }
     if (method === "POST" && pathname === "/v1/auth/signup") {
       const body = await readJson(request);
       sendJson(response, 200, await signupStudent(body));
@@ -416,7 +435,7 @@ async function handleAuthRequest(
     }
     if (method === "POST" && pathname === "/v1/auth/resend-verification") {
       const body = await readJson(request);
-      sendJson(response, 200, await resendVerificationEmail(body));
+      sendJson(response, 200, await resendFirebaseVerificationEmail(body));
       return true;
     }
     if (method === "POST" && pathname === "/v1/auth/verify-email") {

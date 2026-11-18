@@ -1,6 +1,6 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
-import { authenticate } from "@/lib/services/auth";
+import { authenticate, authenticateWithFirebase } from "@/lib/services/auth";
 import { RATE_LIMITS, rateLimit } from "@/lib/rate-limit";
 import { loginSchema } from "@/lib/validation/auth";
 
@@ -13,12 +13,49 @@ export const authOptions: NextAuthOptions = {
   pages: { signIn: "/login" },
   providers: [
     CredentialsProvider({
-      name: "Email and password",
+      name: "Firebase and Credentials",
       credentials: {
         email: { label: "Email", type: "email" },
         password: { label: "Password", type: "password" },
+        idToken: { label: "Firebase ID Token", type: "text" },
       },
       async authorize(credentials) {
+        // 1. Firebase ID Token flow (Primary for registered & migrated users)
+        if (credentials?.idToken && typeof credentials.idToken === "string" && credentials.idToken.trim()) {
+          const trimmedToken = credentials.idToken.trim();
+          const tokenFingerprint = trimmedToken.slice(0, 32);
+
+          const limit = await rateLimit(
+            `login:token:${tokenFingerprint}`,
+            RATE_LIMITS.login.limit,
+            RATE_LIMITS.login.windowMs,
+          );
+          if (!limit.ok) {
+            throw new Error("RATE_LIMITED");
+          }
+
+          const result = await authenticateWithFirebase(trimmedToken);
+          if (!result.ok) {
+            if (result.reason === "EMAIL_NOT_VERIFIED") {
+              throw new Error("EMAIL_NOT_VERIFIED");
+            }
+            if (result.reason === "ACCOUNT_INACTIVE") {
+              throw new Error("ACCOUNT_INACTIVE");
+            }
+            if (result.reason === "RATE_LIMITED") {
+              throw new Error("RATE_LIMITED");
+            }
+            return null;
+          }
+          return {
+            id: result.user.id,
+            name: result.user.name,
+            email: result.user.email,
+            role: result.user.role,
+          };
+        }
+
+        // 2. Legacy credentials / migration flow (for users not yet in Firebase)
         const parsed = loginSchema.safeParse(credentials);
         if (!parsed.success) return null;
 
@@ -39,6 +76,9 @@ export const authOptions: NextAuthOptions = {
           }
           if (result.reason === "ACCOUNT_INACTIVE") {
             throw new Error("ACCOUNT_INACTIVE");
+          }
+          if (result.reason === "MIGRATED_TO_FIREBASE") {
+            throw new Error("MIGRATED_TO_FIREBASE");
           }
           return null;
         }

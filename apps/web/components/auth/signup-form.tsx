@@ -5,12 +5,14 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification, deleteUser } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/auth/password-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { signUpAction, resendVerificationAction } from "@/lib/actions/auth";
+import { signUpFirebaseAction, resendVerificationAction } from "@/lib/actions/auth";
 import { signupSchema } from "@/lib/validation/auth";
 
 type SignupValues = z.infer<typeof signupSchema>;
@@ -39,6 +41,27 @@ export function SignupForm({ verificationRequired }: { verificationRequired: boo
     setResendStatus(null);
     setResendDevUrl(null);
 
+    try {
+      if (auth.currentUser && auth.currentUser.email === registeredEmail) {
+        await sendEmailVerification(auth.currentUser);
+        setResendStatus("A new verification link has been sent to your email.");
+        setCooldown(60);
+        const timer = setInterval(() => {
+          setCooldown((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+        setIsResending(false);
+        return;
+      }
+    } catch (fbResendErr) {
+      console.warn("[AUTH] Client sendEmailVerification failed, falling back to server action:", fbResendErr);
+    }
+
     const result = await resendVerificationAction({ email: registeredEmail });
     setIsResending(false);
 
@@ -65,11 +88,72 @@ export function SignupForm({ verificationRequired }: { verificationRequired: boo
   async function onSubmit(values: SignupValues) {
     setFormError(null);
     setResendStatus(null);
-    const result = await signUpAction(values);
+
+    // 1. Create account using Firebase client SDK
+    let userCredential;
+    let isRecoveredAccount = false;
+    try {
+      userCredential = await createUserWithEmailAndPassword(auth, values.email, values.password);
+    } catch (fbError: any) {
+      if (fbError?.code === "auth/email-already-in-use") {
+        // FIX 7: Orphaned account recovery.
+        // If profile creation previously failed or was interrupted, verify credentials against existing Firebase user.
+        try {
+          userCredential = await signInWithEmailAndPassword(auth, values.email, values.password);
+          isRecoveredAccount = true;
+        } catch (recoverErr) {
+          // Authentication failed: the account exists with different credentials.
+          setFormError("An account with this email already exists. Please sign in or use a different email.");
+          return;
+        }
+      } else if (fbError?.code === "auth/weak-password") {
+        setFormError("Password is too weak. Please use at least 8 characters.");
+        return;
+      } else {
+        setFormError(fbError?.message || "Failed to create account. Please try again.");
+        return;
+      }
+    }
+
+    // 2. Send Firebase email verification if newly created
+    if (!isRecoveredAccount) {
+      try {
+        await sendEmailVerification(userCredential.user);
+      } catch (emailErr) {
+        console.warn("[AUTH] Firebase sendEmailVerification error:", emailErr);
+      }
+    }
+
+    // 3. Send Firebase ID token and profile data to backend
+    let idToken: string;
+    try {
+      idToken = await userCredential.user.getIdToken();
+    } catch (tokenErr) {
+      setFormError("Failed to authenticate account. Please try signing in.");
+      return;
+    }
+
+    const result = await signUpFirebaseAction({
+      idToken,
+      name: values.name,
+      rollNo: values.rollNo,
+      mobile: values.mobile,
+    });
+
     if (!result.success) {
+      // 4. Safe cleanup on backend failure (e.g. duplicate roll number or invalid domain)
+      // Only delete newly created accounts, never delete previously established recovered accounts!
+      if (!isRecoveredAccount) {
+        try {
+          await deleteUser(userCredential.user);
+        } catch (delErr) {
+          console.warn("[AUTH] Failed to cleanup Firebase user on client:", delErr);
+        }
+      }
       setFormError(result.error);
       return;
     }
+
     setRegisteredEmail(values.email);
     setDone(result.data);
   }

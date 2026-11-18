@@ -28,6 +28,7 @@ model User {
   // STUDENT | GUIDE | HOD
   role            String
   passwordHash    String
+  firebaseUid     String?   @unique
   emailVerified   DateTime?
   emailVerifiedAt DateTime?
   // 1 = active, 0 = deactivated (SQLite has no Boolean defaults on some versions)

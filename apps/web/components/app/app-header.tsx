@@ -3,6 +3,8 @@
 import { useState } from "react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
+import { signOut as firebaseSignOut } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { NotificationsBell } from "@/components/app/notifications-bell";
 
@@ -20,7 +22,10 @@ export function AppHeader({
   const handleSignOut = async () => {
     setIsSigningOut(true);
     try {
-      await signOut({ redirect: false });
+      await Promise.allSettled([
+        firebaseSignOut(auth).catch((err) => console.warn("[AUTH] Firebase client signOut error:", err)),
+        signOut({ redirect: false }).catch((err) => console.warn("[AUTH] NextAuth signOut error:", err)),
+      ]);
     } finally {
       window.location.href = "/login";
     }

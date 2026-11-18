@@ -23,6 +23,12 @@ services:
         sync: false
       - key: DIRECT_URL
         sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
+      - key: FIREBASE_CLIENT_EMAIL
+        sync: false
+      - key: FIREBASE_PRIVATE_KEY
+        sync: false
       - key: API_INTERNAL_SECRET
         sync: false
       - key: API_ALLOWED_ORIGINS

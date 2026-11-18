@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { signIn, getSession } from "next-auth/react";
+import { signIn, signOut, getSession } from "next-auth/react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import Link from "next/link";
+import { signInWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,6 +49,27 @@ export function LoginForm() {
     setResendStatus(null);
     setResendDevUrl(null);
 
+    try {
+      if (auth.currentUser && auth.currentUser.email === email) {
+        await sendEmailVerification(auth.currentUser);
+        setResendStatus("Verification email sent! Check your inbox.");
+        setCooldown(60);
+        const timer = setInterval(() => {
+          setCooldown((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+        setIsResending(false);
+        return;
+      }
+    } catch (fbResendErr) {
+      console.warn("Client sendEmailVerification failed, falling back to server action:", fbResendErr);
+    }
+
     const result = await resendVerificationAction({ email });
     setIsResending(false);
 
@@ -81,9 +104,22 @@ export function LoginForm() {
     setResendStatus(null);
     setResendDevUrl(null);
 
+    // Step 1: Attempt Firebase Authentication client sign-in (Section 8)
+    let idToken: string | null = null;
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, values.email, values.password);
+      idToken = await userCredential.user.getIdToken();
+    } catch (firebaseErr: any) {
+      // If user does not exist in Firebase yet (legacy user awaiting migration),
+      // we proceed to attempt migration via NextAuth Credentials Provider.
+      console.info("[AUTH] Firebase client sign-in deferred/failed:", firebaseErr?.code || firebaseErr?.message);
+    }
+
+    // Step 2: NextAuth credentials sign-in
+    // If idToken is present, NextAuth verifies the Firebase token.
+    // If idToken is null, NextAuth checks legacy password and migrates user to Firebase.
     const result = await signIn("credentials", {
-      email: values.email,
-      password: values.password,
+      ...(idToken ? { idToken } : { email: values.email, password: values.password }),
       redirect: false,
     });
 
@@ -104,6 +140,21 @@ export function LoginForm() {
       }
       setFormError("Could not sign you in. Check your email and password.");
       return;
+    }
+
+    // Step 3 (FIX 2): Synchronize Firebase Client Session After Legacy Migration
+    // If idToken was null, the user was migrated on the backend during Step 2.
+    // We must sign in to the Firebase Client SDK now so the browser session is synchronized.
+    if (!idToken) {
+      try {
+        await signInWithEmailAndPassword(auth, values.email, values.password);
+      } catch (fbSyncErr: any) {
+        console.error("[AUTH] Failed to synchronize Firebase client session after migration:", fbSyncErr?.code || fbSyncErr?.message);
+        // Tear down NextAuth session to prevent inconsistent partial authentication
+        await signOut({ redirect: false });
+        setFormError("Account was migrated to Firebase, but browser session synchronization failed. Please try signing in again.");
+        return;
+      }
     }
 
     const session = await getSession();

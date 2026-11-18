@@ -1,41 +1,134 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
+import { applyActionCode, sendEmailVerification } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { resendVerificationAction } from "@/lib/actions/auth";
+import { resendVerificationAction, syncEmailVerificationAction } from "@/lib/actions/auth";
 
 type Props = {
   verifiedEmail: string | null;
   alreadyVerified?: boolean;
   errorMessage: string | null;
   errorCode?: string | null;
+  oobCode?: string;
+  mode?: string;
 };
 
 export function VerifyEmailView({
-  verifiedEmail,
-  alreadyVerified,
-  errorMessage,
-  errorCode,
+  verifiedEmail: initialVerifiedEmail,
+  alreadyVerified: initialAlreadyVerified,
+  errorMessage: initialErrorMessage,
+  errorCode: initialErrorCode,
+  oobCode,
+  mode,
 }: Props) {
+  const [verifiedEmail, setVerifiedEmail] = useState<string | null>(initialVerifiedEmail);
+  const [alreadyVerified, setAlreadyVerified] = useState(Boolean(initialAlreadyVerified));
+  const [errorMessage, setErrorMessage] = useState<string | null>(initialErrorMessage);
+  const [errorCode, setErrorCode] = useState<string | null>(initialErrorCode ?? null);
+
   const [resendEmail, setResendEmail] = useState("");
   const [resendStatus, setResendStatus] = useState<string | null>(null);
   const [resendDevUrl, setResendDevUrl] = useState<string | null>(null);
   const [isResending, setIsResending] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
+  const [checkStatus, setCheckStatus] = useState<string | null>(null);
   const [cooldown, setCooldown] = useState(0);
+
+  // If redirected with Firebase oobCode for verifyEmail
+  useEffect(() => {
+    if (oobCode && (mode === "verifyEmail" || !mode)) {
+      applyActionCode(auth, oobCode)
+        .then(async () => {
+          let userEmail = "";
+          if (auth.currentUser) {
+            await auth.currentUser.reload();
+            userEmail = auth.currentUser.email || "";
+            try {
+              const idToken = await auth.currentUser.getIdToken(true);
+              await syncEmailVerificationAction(idToken);
+            } catch (syncErr) {
+              console.warn("[AUTH] Failed to sync email verification to backend:", syncErr);
+            }
+          }
+          setVerifiedEmail(userEmail || "your email");
+          setErrorMessage(null);
+        })
+        .catch((err: any) => {
+          console.error("[AUTH] applyActionCode failed:", err);
+          setErrorCode("INVALID_TOKEN");
+          setErrorMessage(
+            err?.code === "auth/invalid-action-code"
+              ? "This verification link is invalid or has already been used."
+              : err?.message || "Failed to verify email link.",
+          );
+        });
+    }
+  }, [oobCode, mode]);
+
+  async function handleCheckStatus() {
+    setIsChecking(true);
+    setCheckStatus(null);
+    try {
+      if (auth.currentUser) {
+        await auth.currentUser.reload();
+        if (auth.currentUser.emailVerified) {
+          const idToken = await auth.currentUser.getIdToken(true);
+          const syncRes = await syncEmailVerificationAction(idToken);
+          if (syncRes.success) {
+            setVerifiedEmail(auth.currentUser.email);
+            setAlreadyVerified(Boolean(syncRes.data.alreadyVerified));
+            setIsChecking(false);
+            return;
+          }
+        }
+      }
+      setCheckStatus("Your email is not verified yet. Please click the link sent to your inbox.");
+    } catch (err: any) {
+      setCheckStatus(err?.message || "Could not check verification status.");
+    } finally {
+      setIsChecking(false);
+    }
+  }
 
   async function handleResend(e: React.FormEvent) {
     e.preventDefault();
-    if (!resendEmail.trim()) return;
+    const targetEmail = resendEmail.trim() || auth.currentUser?.email || "";
+    if (!targetEmail) return;
 
     setIsResending(true);
     setResendStatus(null);
     setResendDevUrl(null);
 
-    const result = await resendVerificationAction({ email: resendEmail.trim() });
+    // 1. Try Firebase client sendEmailVerification if user is authenticated in browser
+    try {
+      if (auth.currentUser && auth.currentUser.email === targetEmail) {
+        await sendEmailVerification(auth.currentUser);
+        setResendStatus("A new verification link has been sent. Please check your inbox.");
+        setCooldown(60);
+        const timer = setInterval(() => {
+          setCooldown((prev) => {
+            if (prev <= 1) {
+              clearInterval(timer);
+              return 0;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+        setIsResending(false);
+        return;
+      }
+    } catch (fbResendErr) {
+      console.warn("[AUTH] Client sendEmailVerification failed, falling back to server action:", fbResendErr);
+    }
+
+    // 2. Fallback to server action
+    const result = await resendVerificationAction({ email: targetEmail });
     setIsResending(false);
 
     if (result.success) {
@@ -86,22 +179,42 @@ export function VerifyEmailView({
     );
   }
 
-  // 2. Failed / Expired / Invalid
+  // 2. Failed / Expired / Pending verification
   const isExpired = errorCode === "EXPIRED_TOKEN" || errorMessage?.toLowerCase().includes("expired");
 
   return (
     <div className="space-y-4">
-      <Alert variant="destructive">
-        <AlertDescription>
-          {errorMessage || "We could not verify your email link."}
-        </AlertDescription>
-      </Alert>
+      {errorMessage ? (
+        <Alert variant="destructive">
+          <AlertDescription>{errorMessage}</AlertDescription>
+        </Alert>
+      ) : (
+        <Alert>
+          <AlertDescription>
+            Please check your email and click the verification link to activate your account.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="space-y-2">
+        <Button
+          type="button"
+          onClick={handleCheckStatus}
+          disabled={isChecking}
+          className="w-full"
+        >
+          {isChecking ? "Checking status…" : "I have clicked the link in my email"}
+        </Button>
+        {checkStatus ? (
+          <p className="text-xs text-center text-muted-foreground">{checkStatus}</p>
+        ) : null}
+      </div>
 
       <div className="rounded border p-4 bg-muted/30 space-y-3">
         <h3 className="text-sm font-medium">Request a new verification link</h3>
         <p className="text-xs text-muted-foreground">
           {isExpired
-            ? "Your verification link has expired (valid for 30 minutes). Enter your email to receive a fresh link."
+            ? "Your verification link has expired. Enter your email to receive a fresh link."
             : "Enter your registered college email address to receive a new verification link."}
         </p>
 

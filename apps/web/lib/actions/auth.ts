@@ -6,6 +6,8 @@ import {
   resetPassword,
   resendVerificationEmail,
   signupStudent,
+  signupStudentFirebase,
+  syncEmailVerification,
 } from "@/lib/services/auth";
 import { RATE_LIMITS, rateLimit } from "@/lib/rate-limit";
 import { clientIp } from "@/lib/request";
@@ -35,6 +37,44 @@ export async function signUpAction(
 
   try {
     const data = await signupStudent(input);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: messageOf(error) };
+  }
+}
+
+export async function signUpFirebaseAction(
+  input: unknown,
+): Promise<ActionResult<{ userId: string; message: string }>> {
+  const ip = clientIp();
+  const limit = await rateLimit(`signup:${ip}`, RATE_LIMITS.signup.limit, RATE_LIMITS.signup.windowMs);
+  if (!limit.ok) {
+    return { success: false, error: "Too many sign-up attempts. Please try again later." };
+  }
+
+  try {
+    const data = await signupStudentFirebase(input);
+    return { success: true, data };
+  } catch (error) {
+    return { success: false, error: messageOf(error) };
+  }
+}
+
+export async function syncEmailVerificationAction(
+  idToken: string,
+): Promise<ActionResult<{ success: boolean; email: string; alreadyVerified?: boolean }>> {
+  const ip = clientIp();
+  const limit = await rateLimit(
+    `sync-verify:${ip}`,
+    RATE_LIMITS.resendVerification.limit,
+    RATE_LIMITS.resendVerification.windowMs,
+  );
+  if (!limit.ok) {
+    return { success: false, error: "Too many verification requests. Please try again later." };
+  }
+
+  try {
+    const data = await syncEmailVerification(idToken);
     return { success: true, data };
   } catch (error) {
     return { success: false, error: messageOf(error) };
